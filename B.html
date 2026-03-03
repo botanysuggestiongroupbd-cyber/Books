@@ -187,6 +187,13 @@
             transform: translateX(5px);
             box-shadow: 0 4px 10px rgba(0,0,0,0.15);
         }
+        .voter-ip {
+            background: #f0f0f0;
+            padding: 3px 8px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 0.8em;
+        }
         .message-box {
             background: #fff3cd;
             border: 1px solid #ffeaa7;
@@ -224,9 +231,14 @@
         }
         .notification.success { background: #27ae60; }
         .notification.error { background: #e74c3c; }
+        .notification.info { background: #17a2b8; }
         @keyframes slideIn {
             from { transform: translateX(100%); opacity: 0; }
             to { transform: translateX(0); opacity: 1; }
+        }
+        .small-text {
+            font-size: 0.8em;
+            color: #7f8c8d;
         }
     </style>
 </head>
@@ -270,9 +282,9 @@
 
         <div class="controls">
             <button class="btn btn-primary" onclick="loadResults()">🔄 রিফ্রেশ</button>
-            <button class="btn btn-success" onclick="exportToExcel()">📊 এক্সেল</button>
+            <button class="btn btn-success" onclick="exportAllData()">📊 এক্সপোর্ট (দুটো ফাইল)</button>
             <button class="btn btn-info" onclick="toggleResultsPublish()" id="publish-btn">📢 ফলাফল প্রকাশ</button>
-            <button class="btn btn-danger" >🗑️ সব ভোট ডিলেট</button>
+            <button class="btn btn-danger" onclick="resetAllVotes()">🗑️ সব ভোট ডিলেট</button>
         </div>
 
         <div class="message-box" id="message-box">
@@ -281,12 +293,12 @@
         </div>
 
         <div class="tabs">
-            <button class="tab active" onclick="showTab('voters-tab')">👥 ভোটার তালিকা</button>
-            <button class="tab" onclick="showTab('results-tab')">📊 ফলাফল</button>
+            <button class="tab active" onclick="showTab('voters-tab', event)">👥 ভোটার তালিকা</button>
+            <button class="tab" onclick="showTab('results-tab', event)">📊 ফলাফল</button>
         </div>
 
         <div id="voters-tab" class="tab-content active">
-            <h2>ভোটারদের তালিকা</h2>
+            <h2>ভোটারদের তালিকা <span class="small-text">(IP ঠিকানা সহ)</span></h2>
             <div class="voters-list" id="voters-container">
                 <div class="loading">লোড হচ্ছে...</div>
             </div>
@@ -440,7 +452,7 @@
                     resultsPublished: false,
                     createdAt: new Date().toISOString(),
                     lastUpdated: new Date().toISOString(),
-                    totalCandidates: 39,
+                    totalCandidates: 40,
                     autoCreated: true
                 });
                 resultsPublished = false;
@@ -466,7 +478,7 @@
                 resultsPublished: newStatus,
                 lastUpdated: new Date().toISOString(),
                 updatedBy: 'admin',
-                totalCandidates: 39
+                totalCandidates: 40
             }, { merge: true });
             
             resultsPublished = newStatus;
@@ -587,8 +599,9 @@
                     <div>
                         <div style="font-weight: bold; color: #2c3e50;">${vote.voterName || 'Anonymous'}</div>
                         <div style="color: #7f8c8d; font-size: 0.9em;">
-                            ভোট দেওয়া হয়েছে
+                            ${vote.candidate1} এবং ${vote.candidate2} কে ভোট দিয়েছেন
                         </div>
+                        <div class="voter-ip">IP: ${vote.ip || 'N/A'}</div>
                     </div>
                     <div style="color: #95a5a6; font-size: 0.8em; text-align: right;">
                         <div>${time}</div>
@@ -680,8 +693,11 @@
         }
     }
 
-    window.exportToExcel = async function() {
+    // আপডেটেড এক্সপোর্ট ফাংশন - এখন IP সহ ভোটার তালিকা এবং ফলাফল দুটোই এক্সপোর্ট হবে
+    window.exportAllData = async function() {
         try {
+            showNotification('📊 ডেটা এক্সপোর্ট করা হচ্ছে...', 'info');
+            
             const querySnapshot = await getDocs(collection(db, "votes"));
             const votes = [];
             
@@ -689,6 +705,7 @@
                 votes.push(doc.data());
             });
 
+            // ===== ১. প্রার্থীদের ভোট ফলাফল (results.csv) =====
             const voteCount = {};
             candidates.forEach(candidate => {
                 voteCount[candidate.name] = 0;
@@ -699,32 +716,60 @@
                 if (vote.candidate2) voteCount[vote.candidate2]++;
             });
 
-            let csv = 'প্রার্থীর নাম,মার্কা,ভোট সংখ্যা\n';
+            // প্রথম CSV: প্রার্থীদের ফলাফল
+            let resultsCSV = 'প্রার্থীর নাম,মার্কা,ভোট সংখ্যা,র‌্যাঙ্ক\n';
             
-            Object.entries(voteCount).forEach(([candidateName, count]) => {
+            const sortedResults = Object.entries(voteCount)
+                .sort(([,a], [,b]) => b - a);
+            
+            sortedResults.forEach(([candidateName, count], index) => {
                 const candidate = candidates.find(c => c.name === candidateName);
-                csv += `"${candidateName}","${candidate?.marker || ''}","${count}"\n`;
+                resultsCSV += `"${candidateName}","${candidate?.marker || ''}","${count}","${index + 1}"\n`;
             });
 
-            const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-            const link = document.createElement('a');
-            const url = URL.createObjectURL(blob);
-            link.setAttribute('href', url);
-            link.setAttribute('download', `botany_election_results_${new Date().toISOString().split('T')[0]}.csv`);
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            URL.revokeObjectURL(url);
+            const resultsBlob = new Blob(['\uFEFF' + resultsCSV], { type: 'text/csv;charset=utf-8;' });
+            const resultsLink = document.createElement('a');
+            const resultsUrl = URL.createObjectURL(resultsBlob);
+            resultsLink.setAttribute('href', resultsUrl);
+            resultsLink.setAttribute('download', `election_results_${new Date().toISOString().split('T')[0]}.csv`);
+            document.body.appendChild(resultsLink);
+            resultsLink.click();
+            document.body.removeChild(resultsLink);
+            URL.revokeObjectURL(resultsUrl);
+
+            // ===== ২. ভোটার তালিকা (voters_list.csv) - IP সহ =====
+            let votersCSV = 'ভোটার নাম,প্রার্থী ১,প্রার্থী ২,আইপি ঠিকানা,ফিঙ্গারপ্রিন্ট,টাইমস্ট্যাম্প\n';
             
-            showNotification(`✅ ভোট ফলাফল CSV ফাইল হিসেবে ডাউনলোড হয়েছে!`, "success");
+            votes.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+            
+            votes.forEach(vote => {
+                const timestamp = vote.timestamp ? new Date(vote.timestamp).toLocaleString('bn-BD') : 'N/A';
+                votersCSV += `"${vote.voterName || 'Anonymous'}","${vote.candidate1 || 'N/A'}","${vote.candidate2 || 'N/A'}","${vote.ip || 'N/A'}","${vote.fingerprint || 'N/A'}","${timestamp}"\n`;
+            });
+
+            const votersBlob = new Blob(['\uFEFF' + votersCSV], { type: 'text/csv;charset=utf-8;' });
+            const votersLink = document.createElement('a');
+            const votersUrl = URL.createObjectURL(votersBlob);
+            votersLink.setAttribute('href', votersUrl);
+            votersLink.setAttribute('download', `voters_list_${new Date().toISOString().split('T')[0]}.csv`);
+            document.body.appendChild(votersLink);
+            votersLink.click();
+            document.body.removeChild(votersLink);
+            URL.revokeObjectURL(votersUrl);
+            
+            showNotification(`✅ দুটি ফাইল ডাউনলোড হয়েছে:\n1. election_results_...csv (প্রার্থী ফলাফল)\n2. voters_list_...csv (IP সহ ভোটার তালিকা)`, "success");
+            
         } catch (error) {
             console.error("Export error:", error);
             showNotification('❌ এক্সপোর্ট সমস্যা: ' + error.message, "error");
         }
     }
 
+    // পুরনো exportToExcel ফাংশনটি রিমুভ করে দিচ্ছি, নতুন ফাংশন exportAllData ব্যবহার হবে
+    window.exportToExcel = window.exportAllData;
+
     // ট্যাব স্যুইচ করার ফাংশন - FIXED VERSION
-    window.showTab = function(tabName) {
+    window.showTab = function(tabName, event) {
         console.log("Switching to tab:", tabName);
         
         // প্রথমে সব ট্যাব কন্টেন্ট হাইড করুন
